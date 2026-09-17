@@ -11,18 +11,42 @@ plain-text formats (.md, .txt, .html, .json, ...) and REPORTS the files it had
 to skip. A .pdf in the folder would otherwise make "no matches" mean two very
 different things. Parsing pdf/docx needs a dependency the core doesn't take;
 convert those to text, or put the parser behind an extra.
+
+save_html takes a `url` as well as literal html, and that is the interesting
+half. Asking the model to echo a page back so it can be saved costs tokens
+twice, and the copy is only as complete as the context window allowed — a long
+job posting comes back silently truncated. Fetching in the harness instead
+means the bytes go socket → disk without ever entering the prompt, so the file
+is the server's exact response and the model only reads back a status line.
+
+The fetch is plain HTTP over stdlib urllib (same as search.py and catalog.py —
+the core takes no new dependencies), which cannot run JavaScript. Pages that
+render client-side, like Workday and Taleo job boards, come back as their empty
+shell; the tool detects that and SAYS so rather than handing over a file that
+looks saved and is blank. A headless-browser backend belongs behind an extra,
+the way [voice] and [telegram] are, not in the default install.
 """
 
 from __future__ import annotations
 
 import os
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from waku.tools.registry import Tool
 
 DOCS_DIR_ENV = "WAKU_DOCS_DIR"              # the folder itself; default <home>/documents
 HTML_SUBDIR_ENV = "WAKU_DOCS_HTML_SUBDIR"   # designated output folder; default "html"
+FETCH_MAX_MB_ENV = "WAKU_FETCH_MAX_MB"      # size ceiling for a fetched page
+
+# Some sites answer Python-urllib/3.x with a 403 (see catalog.py for the same
+# problem against model catalogs), so ask the way a browser would.
+FETCH_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+FETCH_TIMEOUT = 20
+DEFAULT_FETCH_MAX_MB = 25
 
 # What can be read as text. Everything else is counted and named as skipped.
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".html", ".htm", ".xml",
@@ -197,6 +221,105 @@ def _safe_html_name(filename: str) -> str:
     return f"{cleaned[:60]}.html" if cleaned else ""
 
 
+def _slug_from_url(url: str) -> str:
+    """A name for a page the user never named. The last path segment is usually
+    the human-meaningful part (.../software-engineer-iii-26032981); when the
+    path is just '/', the host is the only thing left to call it."""
+    parts = urlsplit(url)
+    return Path(parts.path.rstrip("/")).name or parts.netloc or "page"
+
+
+def _max_fetch_bytes() -> int:
+    try:
+        mb = int(os.getenv(FETCH_MAX_MB_ENV, "") or DEFAULT_FETCH_MAX_MB)
+    except ValueError:
+        mb = DEFAULT_FETCH_MAX_MB
+    return max(1, mb) * 1024 * 1024
+
+
+class _FetchError(Exception):
+    """Carries a sentence the model can act on, not a stack trace."""
+
+
+class _HTTPOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """A fetch that starts on the web has to stay on the web.
+
+    The destination of a redirect is chosen by the server, so the scheme check
+    on the url the model passed says nothing about where the request ends up.
+    urllib refuses a hop to file:// on its own, but it allows ftp:// — this
+    narrows the allowed set to the two schemes the tool actually claims.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(newurl).scheme not in ("http", "https"):
+            raise urllib.error.URLError(f"refused a redirect to '{newurl}'")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _looks_js_rendered(payload: bytes) -> bool:
+    """Cheap check for "the server sent an app, not a page". Worth doing badly:
+    a Workday posting saved as a 900-byte script tag is a silent failure the
+    user only discovers when they open the file weeks later."""
+    head = payload[:4000].lower()
+    return (b"enable javascript" in head
+            or b"you need to enable" in head
+            or (len(payload) < 1024 and b"<script" in head))
+
+
+def _fetch(url: str) -> tuple[bytes, str, str]:
+    """GET `url` and return its raw bytes, a one-line status, and a warning if
+    the response looks like a JavaScript shell.
+
+    Bytes, deliberately — not decoded text. The point of fetching here instead
+    of in the prompt is that what lands on disk is the server's exact response,
+    so nothing is re-encoded, re-indented, or cut to fit a context window.
+    """
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https"):
+        raise _FetchError(f"only http and https are fetched, not '{parts.scheme or url}'")
+    if not parts.netloc:
+        raise _FetchError("that is not a complete url — it has no host")
+
+    limit = _max_fetch_bytes()
+    request = urllib.request.Request(url, headers={
+        "User-Agent": FETCH_UA,
+        "Accept": "text/html,*/*",
+        # urllib does not decompress, and these bytes go straight to disk. Ask
+        # for identity so the .html file is html, not a gzip blob named .html.
+        "Accept-Encoding": "identity",
+    })
+    opener = urllib.request.build_opener(_HTTPOnlyRedirects)
+    try:
+        with opener.open(request, timeout=FETCH_TIMEOUT) as response:
+            # One byte past the ceiling, so "too big" is detectable without
+            # holding a whole oversized page in memory to find out.
+            payload = response.read(limit + 1)
+            status, ctype = response.status, response.headers.get("Content-Type", "unknown")
+            encoding = (response.headers.get("Content-Encoding") or "identity").lower()
+    except urllib.error.HTTPError as exc:
+        raise _FetchError(f"the server answered HTTP {exc.code} {exc.reason}") from exc
+    except Exception as exc:
+        raise _FetchError(str(exc) or exc.__class__.__name__) from exc
+
+    if len(payload) > limit:
+        raise _FetchError(
+            f"the page is over the {limit // (1024 * 1024)} MB ceiling. Nothing was saved — "
+            f"half a page is not a copy. Raise {FETCH_MAX_MB_ENV} to keep it anyway")
+
+    warning = ""
+    if encoding != "identity":
+        # Asked for identity and got something else. The bytes are still the
+        # exact response, but calling that "the page" would be a lie.
+        warning = (f" Warning: the server sent {encoding}-compressed bytes despite being asked "
+                   "for none, so the file holds the compressed response, not readable html. "
+                   f"Decompress it before reading ({encoding}).")
+    elif _looks_js_rendered(payload):
+        warning = (" Warning: the response is mostly a JavaScript shell, so this file is the "
+                   "raw HTTP body, not the page a person sees. Boards that render client-side "
+                   "(Workday, Taleo) need a headless browser to capture properly.")
+    return payload, f"HTTP {status}, {ctype}, {len(payload)} bytes", warning
+
+
 def _next_free(folder: Path, stem: str) -> Path:
     for n in range(2, 100):
         candidate = folder / f"{stem}-{n}.html"
@@ -206,12 +329,28 @@ def _next_free(folder: Path, stem: str) -> Path:
 
 
 def make_save_html_tool(home: Path) -> Tool:
-    def save_html(filename: str = "", html: str = "") -> str:
+    def save_html(filename: str = "", html: str = "", url: str = "") -> str:
         # Defensive: a partial tool call should come back as a sentence the
         # model can act on, not a TypeError. Same as create_event.
-        if not filename or not html:
-            return ("save_html needs both a filename and the html content. "
-                    "Please call it again with both.")
+        if url and html:
+            return ("save_html takes either url or html, not both — url to download a live "
+                    "page, html to save a document you wrote. Please call it again with one.")
+        if not url and not html:
+            return ("save_html needs either a url to download or the html content to write. "
+                    "Please call it again with one of them.")
+
+        warning = ""
+        if url:
+            try:
+                payload, status, warning = _fetch(url)
+            except _FetchError as exc:
+                return f"Nothing saved — could not fetch {url}: {exc}."
+            # A page the user pointed at by link usually has no name of its own.
+            filename = filename or _slug_from_url(url)
+        else:
+            # Text the model composed, so normalise the trailing newline. A
+            # fetched page is never touched — that is the whole promise.
+            payload = (html if html.endswith("\n") else html + "\n").encode("utf-8")
 
         name = _safe_html_name(filename)
         if not name:
@@ -223,45 +362,63 @@ def make_save_html_tool(home: Path) -> Tool:
         if dest_dir not in dest.parents:
             return f"refused: path escaped the html folder ({dest_dir})."
 
-        body = html if html.endswith("\n") else html + "\n"
         kept = ""
         if dest.exists():
             try:
-                unchanged = dest.read_text(encoding="utf-8") == body
-            except (OSError, UnicodeDecodeError):
+                unchanged = dest.read_bytes() == payload
+            except OSError:
                 unchanged = False
             # Same name + same content is a no-op, so a retrying model doesn't
             # litter the folder with copies. Same name + DIFFERENT content gets
             # a new file: overwriting would silently destroy a saved page.
             if unchanged:
-                return f"'{name}' is already saved at {dest}, unchanged. Nothing rewritten."
+                return (f"'{name}' is already saved at {dest}, unchanged. "
+                        "Nothing rewritten." + warning)
             dest = _next_free(dest_dir, Path(name).stem)
             kept = f" '{name}' already existed with different content and was left untouched."
 
-        dest.write_text(body, encoding="utf-8")
-        return (f"Saved {len(body)} characters of HTML to {dest}." + kept
+        dest.write_bytes(payload)
+        saved = (f"Fetched {url} ({status}) and saved it byte-for-byte to {dest}." if url
+                 else f"Saved {len(payload)} bytes of HTML to {dest}.")
+        return (saved + kept + warning
                 + " It is a local file — nothing was published or served; open it in a "
                   "browser to view it.")
 
     return Tool(
         name="save_html",
         description=(
-            "Save an HTML document you generated (a report, page, table, or summary) into "
-            "the designated html subfolder of the user's documents folder. Use when the "
-            "user asks you to write up, export, or save something as an HTML file. Pass "
-            "the complete document including <html> and <body>. The file is written "
-            "locally only; an existing file of the same name is never overwritten."
+            "Save an HTML page into the designated html subfolder of the user's documents "
+            "folder, either by downloading a url or by writing html you composed. Pass "
+            "exactly one of them. "
+            "PREFER url whenever the user points at a web page (a job posting, an "
+            "article, a listing): waku downloads it over HTTP and writes the server's "
+            "exact bytes to disk, so the saved file is complete and no part of the page "
+            "has to pass through your context — do NOT fetch a page into your context and "
+            "echo it back as html, that truncates long pages. Pass html only for a "
+            "document you are authoring yourself. filename is optional for a url (it is "
+            "derived from the link). The file is local only, and an existing file of the "
+            "same name is never overwritten. The download cannot run JavaScript, so a "
+            "page that renders client-side saves as its shell — the result says so when "
+            "that happens, and you should pass that on rather than claim a clean copy."
         ),
         input_schema={
             "type": "object",
             "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "http(s) page to download and save verbatim",
+                },
+                "html": {
+                    "type": "string",
+                    "description": "A complete HTML document you wrote (alternative to url)",
+                },
                 "filename": {
                     "type": "string",
-                    "description": "File name without a path, e.g. 'week-summary.html'",
+                    "description": ("File name without a path, e.g. 'week-summary.html'. "
+                                    "Optional when url is given."),
                 },
-                "html": {"type": "string", "description": "The complete HTML document"},
             },
-            "required": ["filename", "html"],
+            "required": [],
         },
         fn=save_html,
     )

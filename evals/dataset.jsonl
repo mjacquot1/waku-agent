@@ -11,3 +11,4 @@
 {"id": "read-before-write", "input": "Check my calendar for a free 30 minutes this afternoon and schedule a short walk", "expect_tool": "create_event", "expect_min_tool_calls": 2}
 {"id": "documents-lookup", "setup_files": {"invoices/march.md": "Invoice 4471\nOsaka workshop venue: 420 EUR\n"}, "input": "What did the Osaka workshop venue cost? Check my documents.", "expect_tool": "search_documents"}
 {"id": "save-html-page", "input": "Write a one-page HTML summary of my week and save it as week-summary.html", "expect_tool": "save_html", "expect_in_args": {"filename": "week"}}
+{"id": "fetch-page-not-paste", "input": "Save the page at https://example.com/ to my documents", "expect_tool": "save_html", "expect_in_args": {"url": "example.com"}}

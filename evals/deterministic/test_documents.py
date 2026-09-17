@@ -1,6 +1,6 @@
 """DETERMINISTIC EVAL — the documents folder: honest reads, non-destructive writes.
 
-Two guarantees are worth pinning in CI, and they are not the happy path:
+Three guarantees are worth pinning in CI, and none of them is the happy path:
 
 1. **search_documents never launders a skip into an empty answer.** A folder
    with one .pdf and one .md must report the .pdf as unsearched, or "nothing
@@ -8,12 +8,22 @@ Two guarantees are worth pinning in CI, and they are not the happy path:
 2. **save_html never overwrites.** The model re-calls tools; if the second call
    with the same filename clobbered the first file, a generated report the user
    already opened would vanish with no trace that it ever existed.
+3. **A fetched page is byte-for-byte.** The reason to download in the harness
+   instead of through the prompt is that the file is the server's exact
+   response. "Saved the posting" is a false claim if the bytes were re-encoded
+   or cut, so the fetch tests assert on bytes off a real socket — a loopback
+   HTTP server, not a patched urlopen — including the redirect and size paths
+   where a wrong answer means writing something that only looks like a copy.
 
 Path containment is checked the way test_gh_tool.py checks argv: assert on what
 WOULD happen (the file that does/doesn't exist on disk), not on the prose.
 """
 
 from __future__ import annotations
+
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,6 +49,48 @@ def search(tmp_path, docs):
 @pytest.fixture
 def save(tmp_path, docs):
     return documents.make_save_html_tool(tmp_path / "home").fn
+
+
+@pytest.fixture
+def site():
+    """A real HTTP server on loopback.
+
+    Byte-for-byte is a claim about what comes off a socket, so a patched
+    urlopen could not prove it: the bug would live in the reading, the
+    redirect handling, or the header, which a fake never exercises. Routes are
+    (status, content-type, body) plus optional extra response headers; for a
+    3xx the body is the Location. `seen` holds the last request's headers.
+    """
+    routes: dict[str, tuple] = {}
+    seen: dict[str, str] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.update(self.headers)
+            code, ctype, body, *rest = routes.get(self.path, (404, "text/plain", b"not found"))
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            for key, value in (rest[0] if rest else {}).items():
+                self.send_header(key, value)
+            if 300 <= code < 400:
+                self.send_header("Location", body.decode())
+                body = b""
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass        # a passing test should be silent
+
+    class Quiet(ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            pass        # the size-ceiling test hangs up mid-body, by design
+
+    httpd = Quiet(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield SimpleNamespace(routes=routes, seen=seen, base=f"http://127.0.0.1:{httpd.server_port}")
+    httpd.shutdown()
+    httpd.server_close()
 
 
 # ---------- search_documents
@@ -171,12 +223,154 @@ def test_save_html_adds_the_extension_and_refuses_an_empty_name(save, docs):
     assert (docs / "html" / "week-42-digest.html").exists()
 
     assert save(filename="...", html="<html>x</html>").startswith("refused:")
-    assert "needs both" in save(filename="ok.html", html="")
+    assert "needs either" in save(filename="ok.html")
+
+
+def test_save_html_refuses_url_and_html_together(save, docs):
+    out = save(filename="a.html", html="<html>x</html>", url="http://127.0.0.1:1/x")
+    assert "either url or html" in out
+    assert not (docs / "html").exists()
 
 
 def test_html_subdir_override_cannot_climb_out(tmp_path, docs, monkeypatch):
     monkeypatch.setenv(documents.HTML_SUBDIR_ENV, "../../elsewhere")
     assert documents.html_dir(tmp_path / "home").parent == docs.resolve()
+
+
+# ---------- save_html fetching a url
+
+
+PAGE = b"<html><head><title>Job</title></head><body>\r\nSoftware Engineer III \xff\r\n</body></html>"
+
+
+def test_fetch_saves_the_exact_bytes(save, docs, site):
+    """The whole reason to download in the harness: CRLFs, a byte that is not
+    valid UTF-8, and no trailing newline all survive to disk untouched."""
+    site.routes["/job"] = (200, "text/html; charset=iso-8859-1", PAGE)
+
+    save(url=f"{site.base}/job", filename="job.html")
+
+    assert (docs / "html" / "job.html").read_bytes() == PAGE
+
+
+def test_fetch_reports_the_status_and_the_path(save, docs, site):
+    site.routes["/job"] = (200, "text/html", PAGE)
+
+    out = save(url=f"{site.base}/job", filename="job.html")
+
+    assert "HTTP 200" in out and "text/html" in out
+    assert str(docs / "html" / "job.html") in out
+    assert "byte-for-byte" in out
+
+
+def test_fetch_derives_the_filename_from_the_url(save, docs, site):
+    site.routes["/en-us/job-detail/software-engineer-iii-26032981"] = (200, "text/html", PAGE)
+
+    save(url=f"{site.base}/en-us/job-detail/software-engineer-iii-26032981")
+
+    assert (docs / "html" / "software-engineer-iii-26032981.html").read_bytes() == PAGE
+
+
+def test_fetch_of_a_missing_page_saves_nothing(save, docs, site):
+    out = save(url=f"{site.base}/gone", filename="gone.html")
+
+    assert "Nothing saved" in out and "404" in out
+    assert not (docs / "html" / "gone.html").exists()
+
+
+def test_fetch_refuses_a_non_http_scheme(save, docs, tmp_path):
+    """urllib would happily open file:// — the tool must not."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("sk-live-do-not-read\n", encoding="utf-8")
+
+    out = save(url=f"file://{secret}", filename="stolen.html")
+
+    assert "only http and https" in out
+    assert not (docs / "html" / "stolen.html").exists()
+
+
+def test_fetch_refuses_a_redirect_to_a_local_file(save, docs, site, tmp_path):
+    """The scheme check on the model's url says nothing about where the SERVER
+    sends us next. urllib blocks this hop itself; the assertion is on the
+    outcome, so it holds whichever layer does the refusing."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("sk-live-do-not-read\n", encoding="utf-8")
+    site.routes["/bounce"] = (302, "text/html", f"file://{secret}".encode())
+
+    out = save(url=f"{site.base}/bounce", filename="bounced.html")
+
+    assert "Nothing saved" in out
+    assert not (docs / "html" / "bounced.html").exists()
+
+
+def test_fetch_refuses_a_redirect_to_ftp(save, docs, site):
+    """The hop urllib would take and this tool won't: its built-in check allows
+    ftp://, which is neither of the two schemes save_html claims to fetch."""
+    site.routes["/bounce"] = (302, "text/html", b"ftp://example.invalid/payload")
+
+    out = save(url=f"{site.base}/bounce", filename="bounced.html")
+
+    assert "Nothing saved" in out and "refused a redirect" in out
+    assert not (docs / "html" / "bounced.html").exists()
+
+
+def test_fetch_still_follows_an_ordinary_redirect(save, docs, site):
+    """The guard above must not have broken the normal case — job boards
+    redirect constantly."""
+    site.routes["/apply"] = (302, "text/html", f"{site.base}/job".encode())
+    site.routes["/job"] = (200, "text/html", PAGE)
+
+    save(url=f"{site.base}/apply", filename="job.html")
+
+    assert (docs / "html" / "job.html").read_bytes() == PAGE
+
+
+def test_fetch_refuses_a_page_over_the_size_ceiling(save, docs, site, monkeypatch):
+    """Half a page is not a copy, so an oversized fetch writes nothing at all
+    rather than a truncated file that reads as saved."""
+    monkeypatch.setenv(documents.FETCH_MAX_MB_ENV, "1")
+    site.routes["/huge"] = (200, "text/html", b"x" * (2 * 1024 * 1024))
+
+    out = save(url=f"{site.base}/huge", filename="huge.html")
+
+    assert "Nothing saved" in out and "1 MB ceiling" in out
+    assert not (docs / "html" / "huge.html").exists()
+
+
+def test_fetching_the_same_page_twice_is_a_no_op(save, docs, site):
+    site.routes["/job"] = (200, "text/html", PAGE)
+    save(url=f"{site.base}/job", filename="job.html")
+
+    out = save(url=f"{site.base}/job", filename="job.html")
+
+    assert "unchanged" in out
+    assert [p.name for p in (docs / "html").iterdir()] == ["job.html"]
+
+
+def test_fetch_asks_for_uncompressed_bytes_and_flags_it_if_refused(save, docs, site):
+    """urllib does not decompress. A gzip body written to disk under an .html
+    name is byte-for-byte correct and completely unreadable, so say so."""
+    body = b"\x1f\x8b" + b"compressed-bytes" * 60
+    site.routes["/gz"] = (200, "text/html", body, {"Content-Encoding": "gzip"})
+
+    out = save(url=f"{site.base}/gz", filename="gz.html")
+
+    assert site.seen.get("Accept-Encoding") == "identity"
+    assert "gzip-compressed" in out and "not readable html" in out
+    assert (docs / "html" / "gz.html").read_bytes() == body
+
+
+def test_fetch_warns_when_the_page_is_a_javascript_shell(save, docs, site):
+    """A Workday posting saves as a 200-byte script tag. The file is still
+    written — it IS the response — but the answer must not read as a clean copy."""
+    shell = (b"<html><body><script src='/app.js'></script>"
+             b"<noscript>Please enable JavaScript</noscript></body></html>")
+    site.routes["/workday"] = (200, "text/html", shell)
+
+    out = save(url=f"{site.base}/workday", filename="workday.html")
+
+    assert "JavaScript shell" in out and "headless browser" in out
+    assert (docs / "html" / "workday.html").exists()
 
 
 # ---------- wiring

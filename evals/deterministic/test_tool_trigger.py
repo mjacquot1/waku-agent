@@ -112,6 +112,15 @@ def test_dataset_case(case, tmp_path):
     app = make_waku(tmp_path / "home")
     if "setup_fact" in case:
         app.memory.facts.add(case["setup_fact"]["subject"], case["setup_fact"]["content"])
+    # Cases for search_documents need a folder to find something in. Seeded the
+    # same way as setup_fact: the case describes its own world, so a live run
+    # never depends on what happens to be in the maintainer's documents folder.
+    for relpath, content in case.get("setup_files", {}).items():
+        from waku.tools.documents import docs_root
+
+        path = docs_root(app.settings.home) / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
     result = app.respond(case["input"])
     fired = [c["tool"] for c in result.tool_calls]

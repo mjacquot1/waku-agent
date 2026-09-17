@@ -9,3 +9,5 @@
 {"id": "exact-count-sessions", "input": "Block three 25-minute focus sessions tomorrow morning", "expect_tool": "create_event", "expect_min_tool_calls": 3}
 {"id": "remember-and-book", "input": "Remember that I'm vegetarian, then book dinner with Sam this Thursday at 7pm", "expect_tool": "create_event", "expect_in_args": {"title": "sam"}, "expect_min_tool_calls": 2}
 {"id": "read-before-write", "input": "Check my calendar for a free 30 minutes this afternoon and schedule a short walk", "expect_tool": "create_event", "expect_min_tool_calls": 2}
+{"id": "documents-lookup", "setup_files": {"invoices/march.md": "Invoice 4471\nOsaka workshop venue: 420 EUR\n"}, "input": "What did the Osaka workshop venue cost? Check my documents.", "expect_tool": "search_documents"}
+{"id": "save-html-page", "input": "Write a one-page HTML summary of my week and save it as week-summary.html", "expect_tool": "save_html", "expect_in_args": {"filename": "week"}}

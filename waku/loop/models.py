@@ -10,7 +10,7 @@ Pick with WAKU_PROVIDER=anthropic|openai|gemini|deepseek|minimax|kimi|glm|openro
 and set that provider's API key in .env. Override the model ids with WAKU_MODEL /
 WAKU_SMALL_MODEL if the defaults below age out — they're just strings. This
 matters most for openrouter: it's a single key in front of hundreds of models,
-so WAKU_MODEL=<vendor>/<model> (e.g. "google/gemini-3.5-flash") picks whichever
+so WAKU_MODEL=<vendor>/<model> (e.g. "google/gemini-3.5-flash-lite") picks whichever
 one you want — and its defaults below are $0 ":free" ids, so it works with no
 spend at all (rate-limited). The dashboard Settings tab lists the live catalog.
 """
@@ -103,10 +103,10 @@ PROVIDERS: dict[str, Provider] = {
                            "google/gemma-4-26b-a4b-it:free"),
     "gemini":    Provider("openai", "GEMINI_API_KEY",
                           "https://generativelanguage.googleapis.com/v1beta/openai/",
-                          "gemini-3.5-flash", "gemini-3.1-flash-lite",
+                          "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
                           # Google's Pro tier isn't "gemini-3.5-pro" (that id
                           # 404s); the current Pro is gemini-3.1-pro-preview.
-                          flagship="gemini-3.1-pro-preview", fast="gemini-3.5-flash"),
+                          flagship="gemini-3.8-flash", fast="gemini-3.5-flash-lite"),
     "deepseek":  Provider("openai", "DEEPSEEK_API_KEY", "https://api.deepseek.com",
                           "deepseek-v4-pro", "deepseek-v4-pro"),
     "minimax":   Provider("anthropic", "MINIMAX_API_KEY", "https://api.minimaxi.com/anthropic",
@@ -442,13 +442,18 @@ class _OpenAIStream:
                 self._text.append(delta.content)
                 yield delta.content
             for tc in (getattr(delta, "tool_calls", None) or []):
-                slot = self._tools.setdefault(tc.index, {"id": None, "name": "", "args": ""})
+                slot = self._tools.setdefault(
+                    tc.index, {"id": None, "name": "", "args": "", "extra": None}
+                )
                 if tc.id:
                     slot["id"] = tc.id
                 if tc.function and tc.function.name:
                     slot["name"] = tc.function.name
                 if tc.function and tc.function.arguments:
                     slot["args"] += tc.function.arguments
+                extra = getattr(tc, "extra_content", None)
+                if extra:
+                    slot["extra"] = extra
 
     def get_final_message(self):
         blocks = []
@@ -458,7 +463,9 @@ class _OpenAIStream:
         for slot in self._tools.values():
             blocks.append(SimpleNamespace(
                 type="tool_use", id=slot["id"], name=slot["name"],
-                input=json.loads(slot["args"] or "{}")))
+                input=json.loads(slot["args"] or "{}"),
+                extra=slot.get("extra"),   # ← matches _create
+            ))
         usage = self._usage
         return SimpleNamespace(
             stop_reason="tool_use" if self._tools else "end_turn",

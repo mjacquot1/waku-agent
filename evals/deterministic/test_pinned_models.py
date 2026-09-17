@@ -34,25 +34,21 @@ def home(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text("")
     for var in PROVIDER_KEYS:
         monkeypatch.delenv(var, raising=False)
-    # apply_settings bypasses monkeypatch and writes directly to os.environ,
-    # so WAKU_PROVIDER must also be tracked to prevent leaking into later
-    # tests (test_tool_trigger would inherit a stale provider and crash).
-    monkeypatch.delenv("WAKU_PROVIDER", raising=False)
     return tmp_path
 
 
 def test_pin_persists_and_marks_first_per_provider_default(home):
-    d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-flash"})
+    d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-flash-lite"})
     d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-pro"})
     info = d.pin_action({"action": "pin", "provider": "kimi", "model": "kimi-k3"})
 
     # persisted to disk in insertion order
     saved = json.loads((home / "models.json").read_text())["pinned"]
-    assert saved == ["gemini:gemini-3.5-flash", "gemini:gemini-3.5-pro", "kimi:kimi-k3"]
+    assert saved == ["gemini:gemini-3.5-flash-lite", "gemini:gemini-3.5-pro", "kimi:kimi-k3"]
 
     # settings_info() surfaces the shortlist; first-per-provider is the default
     flags = {(p["provider"], p["model"]): p["default"] for p in info["pinned"]}
-    assert flags[("gemini", "gemini-3.5-flash")] is True
+    assert flags[("gemini", "gemini-3.5-flash-lite")] is True
     assert flags[("gemini", "gemini-3.5-pro")] is False
     assert flags[("kimi", "kimi-k3")] is True
 
@@ -72,9 +68,9 @@ def test_make_default_moves_model_to_front_of_its_group(home):
 
 
 def test_unpin_removes_and_promotes_next_default(home):
-    d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-flash"})
+    d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-flash-lite"})
     d.pin_action({"action": "pin", "provider": "gemini", "model": "gemini-3.5-pro"})
-    info = d.pin_action({"action": "unpin", "provider": "gemini", "model": "gemini-3.5-flash"})
+    info = d.pin_action({"action": "unpin", "provider": "gemini", "model": "gemini-3.5-flash-lite"})
     assert [p["model"] for p in info["pinned"]] == ["gemini-3.5-pro"]
     assert catalog.default_model_for("gemini") == "gemini-3.5-pro"   # survivor is now default
 
@@ -126,7 +122,7 @@ def test_default_pair_is_flagship_then_fast(home):
     from waku.loop.models import PROVIDERS
 
     assert PROVIDERS["anthropic"].default_pair() == ["claude-opus-4-8", "claude-sonnet-5"]
-    assert PROVIDERS["gemini"].default_pair() == ["gemini-3.1-pro-preview", "gemini-3.5-flash"]
+    assert PROVIDERS["gemini"].default_pair() == ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
     assert PROVIDERS["kimi"].default_pair() == ["kimi-k3", "kimi-k2.7-code-highspeed"]
     # a provider that never set flagship/fast falls back to model/small_model
     assert PROVIDERS["minimax"].default_pair() == ["MiniMax-M3", "MiniMax-M2"]

@@ -51,7 +51,7 @@ def test_thread_history_includes_meta(tmp_path, monkeypatch):
     monkeypatch.setenv("WAKU_HOME", str(tmp_path / "home"))
     app = make_waku(tmp_path / "home", client=ScriptedClient([]))
     meta = {"gate": {"decision": "skip"}, "iterations": 1, "latency_ms": 2400,
-            "tools": [], "model": "gemini-3.5-flash"}
+            "tools": [], "model": "gemini-3.5-flash-lite"}
     app.conn.execute("INSERT INTO chat_log (role, content, session_id, source) VALUES ('user','hi','t','dashboard')")
     app.conn.execute("INSERT INTO chat_log (role, content, session_id, source, meta) "
                      "VALUES ('assistant','hey','t','dashboard',?)", (json.dumps(meta),))
@@ -59,5 +59,5 @@ def test_thread_history_includes_meta(tmp_path, monkeypatch):
 
     hist = _thread_history(app.conn, "t")
     assert hist[0]["meta"] is None                     # user row
-    assert hist[1]["meta"]["model"] == "gemini-3.5-flash"
+    assert hist[1]["meta"]["model"] == "gemini-3.5-flash-lite   "
     assert hist[1]["meta"]["gate"]["decision"] == "skip"

@@ -378,14 +378,14 @@ cost** by clicking the headers. This is the "is opus 2× the price 2× better?" 
 
 ### Act 5 — the coding round (terminal, not the dashboard yet)
 ```bash
-make shootout-coding RUNS="kimi:kimi-k3 anthropic:claude-opus-4-8 gemini:gemini-3.5-flash"
+make shootout-coding RUNS="kimi:kimi-k3 anthropic:claude-opus-4-8 gemini:gemini-3.5-flash-lite"
 ```
 Each model's pi writes real code, scored by tests passing. Report saved to
 `.waku/shootout/coding-*.md`.
 
 ### Optional — the reproducible CLI table (all agentic cases, all models)
 ```bash
-make shootout RUNS="kimi:kimi-k3 anthropic:claude-opus-4-8 gemini:gemini-3.5-flash openai:gpt-5.3-chat-latest xai:grok-4.5"
+make shootout RUNS="kimi:kimi-k3 anthropic:claude-opus-4-8 gemini:gemini-3.5-flash-lite openai:gpt-5.3-chat-latest xai:grok-4.5"
 ```
 `--trials 3` for stable pass-RATES (tool-calling is nondeterministic); saves a
 markdown + json report to `.waku/shootout/` anyone can reproduce with their keys.
@@ -438,7 +438,7 @@ Two races, two models, known token counts:
 | model (rate) | race 1 | race 2 | → solved | K3 grade | total tok | total cost |
 |---|---|---|---|---|---|---|
 | kimi-k3 ($3/$15) | 1000 in / 500 out · passed · q8 | 2000 in / 1000 out · failed · q6 | **1/2** | **7.0** = (8+6)/2 | **4500** | **$0.0315** = (3000·3 + 1500·15)/1M |
-| gemini-3.5-flash ($1.5/$9) | 1000 in / 200 out · passed · q5 | **errored** | **1/1** (errored race not scored) | **5.0** (only race 1 judged) | **1200** | **$0.0033** = (1000·1.5 + 200·9)/1M |
+| gemini-3.5-flash-lite ($1.5/$9) | 1000 in / 200 out · passed · q5 | **errored** | **1/1** (errored race not scored) | **5.0** (only race 1 judged) | **1200** | **$0.0033** = (1000·1.5 + 200·9)/1M |
 
 Running `aggregate()` on these inputs reproduces every bold number exactly — the
 scoreboard math is correct. (Re-verify anytime with the worked-example script in

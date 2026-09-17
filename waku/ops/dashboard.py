@@ -1010,7 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         # /api/chat/stream streams harness events (SSE) as the turn runs.
         if self.path == "/api/chat/stream":
-            payload = json.loads(self.rfile.read(length) or "{}")
+            payload = json.loads(self.rfile.read(length) or "{}")                                                                              
             message = (payload.get("message") or "").strip()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -1172,7 +1172,8 @@ def main() -> None:
     base = int(os.getenv("WAKU_DASHBOARD_PORT") or os.getenv("PORT") or PORT)
     for port in range(base, base + 10):  # walk past a busy port instead of crashing
         try:
-            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            host = os.getenv("WAKU_DASHBOARD_HOST", "127.0.0.1")
+            server = ThreadingHTTPServer((host, port), Handler)
         except OSError:
             print(f"port {port} busy, trying {port + 1}…")
             continue

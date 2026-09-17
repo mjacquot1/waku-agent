@@ -104,11 +104,11 @@ def test_gemini_thought_signature_round_trips():
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
     client._call = lambda kwargs, **extra: resp
 
-    parsed = client._create(model="gemini-3.5-flash", messages=[{"role": "user", "content": "hi"}], max_tokens=10)
+    parsed = client._create(model="gemini-3.5-flash-lite", messages=[{"role": "user", "content": "hi"}], max_tokens=10)
     block = next(b for b in parsed.content if b.type == "tool_use")
     assert block.extra == sig                                  # captured on parse
 
-    kwargs = client._to_openai(model="gemini-3.5-flash", max_tokens=10,
+    kwargs = client._to_openai(model="gemini-3.5-flash-lite", max_tokens=10,
                                messages=[{"role": "assistant", "content": parsed.content}])
     assert kwargs["messages"][0]["tool_calls"][0]["extra_content"] == sig   # echoed back
 

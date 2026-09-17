@@ -1,0 +1,40 @@
+# Local Waku in Docker. Keys come from .env (copy .env.example if you have
+# none). Memory, calendar and traces are written straight into ./.waku.
+#
+#   docker compose up --watch --build
+#   open http://localhost:7777
+#
+# waku/ and skills/ are bind-mounted, so host edits are in the container
+# immediately. Static JS/CSS/HTML is read from disk on every request — a
+# browser refresh is enough. Python modules are held in memory, same as
+# `make dashboard`, so --watch restarts the process on a .py change.
+#
+# Terminal chat instead of the dashboard:
+#   docker compose run --rm waku waku
+services:
+  waku:
+    build: .
+    ports:
+      - "7777:7777"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WAKU_DASHBOARD_HOST: "0.0.0.0"
+      WAKU_HOME: /app/.waku
+    volumes:
+      - ./.waku:/app/.waku
+      - ./waku:/app/waku
+      - ./skills:/app/skills
+    develop:
+      watch:
+        # Don't bounce the server for a CSS tweak — those files are live.
+        - path: ./waku
+          action: restart
+          ignore:
+            - ops/static/
+            - "**/__pycache__/"
+            - "**/*.pyc"
+        - path: ./pyproject.toml
+          action: rebuild
+    restart: unless-stopped

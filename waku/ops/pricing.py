@@ -62,8 +62,8 @@ MODEL_PRICING = {
     "gpt-5.6-sol": (5.0, 30.0),
     "gpt-5.3-chat-latest": (1.75, 14.0),
     # Google Gemini — ai.google.dev pricing (standard <200k tier)
-    "gemini-3.1-pro-preview": (2.0, 12.0),
-    "gemini-3.5-flash": (1.5, 9.0),
+    "gemini-3.8-flash": (2.0, 12.0),
+    "gemini-3.5-flash-lite": (1.5, 9.0),
     # Moonshot Kimi — platform.kimi.ai (highspeed = 2x the standard k2.7 rate)
     "kimi-k3": (3.0, 15.0),
     "kimi-k2.7-code-highspeed": (1.9, 8.0),
@@ -96,8 +96,8 @@ MODEL_CUTOFF = {
     "gpt-5.6-sol": "2026-02",
     "gpt-5.3-chat-latest": "2025-08",
     # Google Gemini — deepmind.google model cards / ai.google.dev
-    "gemini-3.1-pro-preview": "2025-01",
-    "gemini-3.5-flash": "2025-01",
+    "gemini-3.8-flash": "2025-01",
+    "gemini-3.5-flash-lite": "2025-01",
     # Moonshot Kimi — K3 reported "early 2026"; K2.7 cutoffs unpublished
     "kimi-k3": "2026-01",
     "kimi-k2.7-code-highspeed": None,

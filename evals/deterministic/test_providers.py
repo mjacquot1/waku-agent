@@ -177,7 +177,7 @@ def test_every_priced_model_has_a_knowledge_cutoff():
                 f"{model}: cutoff {cutoff!r} is not YYYY-MM"
 
     # The motivating case, plus the unknown-model path (no guessing).
-    assert cutoff_for("gemini-3.1-pro-preview") == "2025-01"
+    assert cutoff_for("gemini-3.1-pro") == "2025-01"
     assert cutoff_for("some-future-model") is None
 
 

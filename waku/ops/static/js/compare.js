@@ -166,7 +166,7 @@ function toggleApple(){
 const JUDGES = [
   {spec:"openai:gpt-5.6-sol",            label:"GPT-5.6 Sol"},
   {spec:"anthropic:claude-opus-4-8",     label:"Claude Opus 4.8"},
-  {spec:"gemini:gemini-3.1-pro-preview", label:"Gemini 3.1 Pro"},
+  {spec:"gemini:gemini-3.8-flash", label:"Gemini 3.1 Pro"},
   {spec:"kimi:kimi-k3",                  label:"Kimi K3 (contestant)"},
 ];
 function setJudgeModel(spec){ compareState.judgeModel = spec; editing = false; render(); }

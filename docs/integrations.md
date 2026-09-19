@@ -223,3 +223,56 @@ python evals/fixtures/mcp_demo_server.py --http --port 8931
 Requires `mcp>=2.1` (`pip install -e '.[mcp]'`). The 1.x SDK spelled this
 transport differently and the remote branch does not work on it.
 
+## Save a rendered web page
+
+`save_html` downloads a URL with plain HTTP by default. Career sites that
+paint the listing in JavaScript (Workday, Taleo, Phenom) need a headless
+browser:
+
+```bash
+pip install -e '.[browser]'
+playwright install chromium
+```
+
+Ask Waku to save the page, or pass `render=true`. Pass `wait_for_selector`
+(a CSS selector such as `.search-result-item`) so Chromium waits until the
+filtered cards are on screen; without it the snapshot is often the SPA's
+default results, before `rows=` and `filters=` apply. JSON API responses the
+page fetched are written beside the HTML as `*.network.json`, with the listing
+payload tagged `role=listing`.
+
+Career SPAs often ignore query parameters on the HTML URL. Fetch the listing
+endpoint from that sidecar with `save_html` (no `render`) to keep the complete
+filtered JSON — for example
+`https://careers.example.com/services/jobssearchservlet?start=0&rows=100&filters=area%3DTechnology`.
+JSON is pretty-printed and saved as `.json`.
+
+To download many postings with custom names in one call, pass `jobs` (an array
+of `{url, filename, title, req_id, apply_url}` objects) or `urls` plus
+`naming_prefix` (so each file is `{prefix}-{url-slug}.html`). Pass `company`
+(e.g. `jpmorgan`) to save the crawl under `jobs/<company>/YYYY-MM-DD/`
+(Pacific Time calendar day) and write `manifest-<company>-YYYY-MM-DD.json`
+listing each role. A later question
+like "what jobs did we get from JPMC today?" should read that manifest, not
+re-parse every HTML file. `query_json` on that file with `..roles[]` lists the
+roles. Pass `subfolder` to pick the destination yourself.
+
+`search_documents` is keyword grep. Pass `subfolder="jobs/jpmorgan"` or
+`filename_pattern="jpmorgan"` so files from another company are not opened.
+Use `query_json` to filter a saved listing by field:
+
+```
+..jobsList[] | select(.postedDate == today)
+..jobsList[] | select(.area | contains("Technology"))
+```
+
+`today` matches ISO (`2026-09-18`) and US (`09/18/2026`) dates. Pass `fields`
+to keep only the keys you need. `search_documents` still shows five matches
+per file unless you raise `max_per_file` (and `max_results`) when grepping.
+
+Waku does not bypass bot-protection interstitials; those are reported as
+blocked.
+
+In Docker the same extra is installed at image build and again on container
+start (`docker-entrypoint.sh`), so `docker compose up --build` is enough.
+

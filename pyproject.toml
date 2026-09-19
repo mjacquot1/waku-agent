@@ -73,6 +73,12 @@ discord = [
 whatsapp = [
     "httpx>=0.25",
 ]
+# Optional: paint JavaScript pages (Workday, Phenom, Taleo) in headless Chromium
+# when save_html is called with render=true. After pip, run:
+#   playwright install chromium
+browser = [
+    "playwright>=1.40",
+]
 # Optional gateway: talk to your laptop. TTS uses macOS `say` by default;
 # for the neural British voice: pip install kokoro soundfile (pulls torch).
 voice = [

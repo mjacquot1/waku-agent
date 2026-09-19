@@ -9,6 +9,9 @@
 # browser refresh is enough. Python modules are held in memory, same as
 # `make dashboard`, so --watch restarts the process on a .py change.
 #
+# save_html(render=true) installs the [browser] extra and Chromium on every
+# container start (docker-entrypoint.sh). Rebuild after a pyproject.toml change.
+#
 # Terminal chat instead of the dashboard:
 #   docker compose run --rm waku waku
 services:

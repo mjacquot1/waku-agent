@@ -4,6 +4,11 @@
 #
 #   docker compose up --build
 #   open http://localhost:7777
+#
+# save_html(render=true) needs Playwright + Chromium. The Python extra and the
+# browser OS libraries are installed here; docker-entrypoint.sh re-runs
+# `uv pip install -e '.[browser]'` and `playwright install chromium` on every
+# start so an older image still heals itself.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -16,14 +21,20 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE LICENSE-BRAND ./
 COPY waku ./waku
 COPY skills ./skills
-
-RUN uv venv && uv pip install --no-cache -e .
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     WAKU_DASHBOARD_HOST=0.0.0.0 \
-    WAKU_HOME=/app/.waku
+    WAKU_HOME=/app/.waku \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN chmod +x /docker-entrypoint.sh \
+    && uv venv \
+    && uv pip install --no-cache -e '.[browser]' \
+    && playwright install --with-deps chromium
 
 EXPOSE 7777
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["waku", "dashboard"]

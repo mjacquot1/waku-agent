@@ -1,5 +1,5 @@
 """The agent's tools. Flagship-task tools (calendar/notes/messages), the user's
-document folder (search_documents/save_html), memory
+document folder (search_documents/save_html/query_json), memory
 self-management (manage_memory/update_soul/create_skill), and opt-in adapters:
 Apple ecosystem (WAKU_APPLE_TOOLS=1) and MCP servers (.waku/mcp.json)."""
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from waku.config import Settings
-from waku.tools import calendar, documents, memory_admin, messages, notes, search
+from waku.tools import calendar, documents, jsonquery, memory_admin, messages, notes, search
 from waku.tools.registry import ToolRegistry
 
 
@@ -33,10 +33,12 @@ def build_registry(conn: sqlite3.Connection, settings: Settings, memory=None) ->
     # ("find the World Cup games left and add them to my calendar").
     registry.register(search.make_tool())
 
-    # The user's own documents: read the folder (WAKU_DOCS_DIR, default
-    # .waku/documents/) and write generated HTML back into its html/ subfolder.
+    # The user's own downloads: read the folder (WAKU_DOCS_DIR, default
+    # .waku/downloads/) and write generated HTML back into html/, or into
+    # jobs/<company>/<date>/ when save_html is given a company.
     registry.register(documents.make_search_tool(settings.home))
     registry.register(documents.make_save_html_tool(settings.home))
+    registry.register(jsonquery.make_query_json_tool(settings.home))
 
     # Memory self-management — the agent can correct/forget memory, learn rules,
     # and author its own skills (feels like a personal agent, not a black box).
